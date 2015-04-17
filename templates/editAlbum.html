@@ -1,0 +1,57 @@
+{% extends "main.html" %}
+{% block content %}
+{% include "header.html" %}
+	<div class="row divider green">
+		<div class="col-md-12"></div>
+	</div>
+	<div class="row banner main collection">
+		<div class="col-md-11 col-md-offset-1 padding-none">
+			<h1>Edit Album</h1>
+		</div>
+	</div>
+	<div class="row">
+		<div class="col-md-6 col-md-offset-1 padding-top">
+			<form action="#" method = "post" style="display: inline;">
+				<div class="form-group" style="display: inline;">
+					<label for="name">Name:</label>
+					<input type ="text" maxlength="250" class="form-control" name="name" value="{{album.name}}">
+					<label for="artist">Artist:</label>
+					<input type ="text" maxlength="250" class="form-control" name="artist" value="{{album.artist}}">
+					<label for="genre">Genre:</label>
+					<div class="radio">
+					  <label>
+					    <input type="radio" name="genre" id="genre1" value="Rock" {% if album.genre == 'Rock'%}checked{%endif%}>Rock
+					  </label>
+					</div>
+					<div class="radio">
+					  <label>
+					    <input type="radio" name="genre" id="genre2" value="Jazz" {% if album.genre == 'Jazz' %}checked{%endif%}>Jazz
+					  </label>
+					</div>
+					<div class="radio">
+					  <label>
+					    <input type="radio" name="genre" id="genre3" value="Folk" {% if album.genre == 'Folk'%}checked{%endif%}>Folk
+					  </label>
+					</div>
+					<div class="radio">
+					  <label>
+					    <input type="radio" name="genre" id="genre4" value="Classic" {%if album.genre =='Classic'%}checked{%endif%}>Classic
+					  </label>
+					</div>
+					<label for="year">Year:</label>
+					<div class="input-group">
+						<input type ="text" maxlength="4" class="form-control" name="year" value="{{album.year}}">
+					</div>
+					<label for="description">Description:</label>
+					<textarea class="form-control" maxlength="250" rows="3" name="description">{{album.description}}</textarea>
+					<button type="submit" class="btn btn-default" id="submit" type="submit">
+					<span class="glyphicon glyphicon-ok" aria-hidden="true"></span>Save</button>
+				</div>
+			</form>
+			<a href = '{{url_for('indexAlbums', collection_id=collection_id)}}'>
+				<button class="btn btn-default delete">
+				<span class="glyphicon glyphicon-remove" aria-hidden="true"></span>Cancel</button>
+			</a>
+		</div>
+	</div>
+{% endblock %}

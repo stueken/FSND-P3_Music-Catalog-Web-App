@@ -1,0 +1,70 @@
+{% extends "main.html" %}
+{% block content %}
+{% include "header.html" %}
+	<div class="row divider green">
+		<div class="col-md-12"></div>
+	</div>
+	<div class="row banner main collection">
+		<div class="col-md-11 col-md-offset-1 padding-none">
+			<h1>{{ collection.name }}
+			<figure class="creator">
+				<img src="{{ creator.picture }}">
+				<figcaption>{{ creator.name }}</figcaption>
+			</figure>
+			</h1>
+		</div>
+	</div>
+	<div class = 'flash'>
+		<!-- 'with' is a block that does some automatic cleanup when the block is exited -->
+		{% with messages = get_flashed_messages() %}
+	      {% if messages %}
+	        <ul>
+	        {% for message in messages %}
+	            <li> <strong> {{ message }} </strong> </li>
+	        {% endfor %}
+	        </ul>
+	        {% endif %}
+	    {% endwith %}
+	</div>
+
+	<div class="row padding-top padding-bottom">
+		<div class="col-md-1"></div>
+		<div class="col-md-11 padding-none">
+			<a href="{{url_for('editCollection', collection_id = collection.id)}}">
+				<button class="btn btn-default" id="new-album">
+					<span class="glyphicon glyphicon-pencil" aria-hidden="true"></span>Edit Collection
+				</button>
+			</a>
+			<a href="{{url_for('newAlbum', collection_id = collection.id)}}">
+				<button class="btn btn-default" id="new-album">
+					<span class="glyphicon glyphicon-glass" aria-hidden="true"></span>Add Album
+				</button>
+			</a>
+			<a href="{{url_for('deleteCollection', collection_id = collection.id )}}">
+				<button class="btn btn-default delete" id="delete-collection">
+					<span class="glyphicon glyphicon-trash" aria-hidden="true"></span>Delete Collection
+				</button>
+			</a>
+		</div>
+		<div class="col-md-7"></div>
+	</div>
+	
+	{% if albums !=[] %}	
+		<div class="row">
+			<div class="col-md-1"></div>
+			<div class="col-md-10">
+				<h2>Albums</h2>
+					{% for a in albums %}
+						<div class="album">
+							<h3>{{a.artist}} - {{a.name}}</h3>
+							<p>{{a.description}}</p>
+							<p class="album-year">{{a.year}}</p>
+							<a href='{{url_for('editAlbum', collection_id = collection.id, album_id=a.id ) }}'>Edit</a> | 
+							<a href='{{url_for('deleteAlbum', collection_id = collection.id, album_id=a.id ) }}'>Delete</a>
+						</div>
+					{% endfor %}
+			</div>
+			<div class="col-md-1"></div>
+		</div>
+	{% endif %}
+{% endblock %}
