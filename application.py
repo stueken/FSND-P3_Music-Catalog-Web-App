@@ -1,107 +1,127 @@
 import os
-# send_from_directory-function helps to serve uploaded files to the user
+import random
+import string
+import httplib2  # A http client library.
+# This module provides an API converting inmemory python objects to a
+# serialized representation known as JSON.
+import json
+# Apache2 license http-library written in Python similar to
+# urllib2, but with a few improvements.
+import requests
 from flask import (Flask, render_template, request, redirect, jsonify, url_for,
-                   flash, send_from_directory)
-# Function to validate filenames in case it is forged
+                   flash)
+# To prevent anti-forgery request attacks a unique session token needs to be
+# created that the client side returns alongside the Google generated
+# authorization code.
+# The login_session object works like a dictionary. Values can be stored in it
+# for the longevity of a user session with the server.
+from flask import session as login_session
+# Converts the return value from a function into a real response object that
+# can be send off to the client.
+from flask import make_response
+# SeaSurf is a Flask Extension for preventing cross-site request forgery
+# (CSRF).
+from flask.ext.seasurf import SeaSurf
+# Function to validate filenames in case it is forged.
 from werkzeug import secure_filename
+# Function to creates a flow object from the clientsecrets-JSON-file. This
+# JSON-formatted file stores the client id, client secret and other OAuth2
+# parameters.
+from oauth2client.client import flow_from_clientsecrets
+# This function catches a possible error when trying to exchange an
+# authorization code for an access token.
+from oauth2client.client import FlowExchangeError
 from sqlalchemy import create_engine, asc
 from sqlalchemy.orm import sessionmaker
 from database_setup import Base, Collection, Album, User
 
-# To prevent anti-forgery request attacks a unique session token needs to be
-# created that the client side returns alaongside the Google generated
-# authorization code.
-# The login_session object works like a dictionary. We can store values in it
-# for the longevity of a user session with our server
-from flask import session as login_session
-import random
-import string
-
-# SeaSurf is a Flask Extension for preventing cross-site request forgery (CSRF)
-from flask.ext.seasurf import SeaSurf
-
-# The flow_from_clientsecrets method creates a flow object from the
-# clientsecrets-JSON-file. This JSON-formatted file stores your client id,
-# client secret and other OAuth2 parameters
-from oauth2client.client import flow_from_clientsecrets
-# The FlowExchangeError method is used if we run into an error trying to
-# exchange an authorization code for an access token. We can use this
-# FlowExchangeError method to catch it.
-from oauth2client.client import FlowExchangeError
-# httplib2 is a comprehensive http client library in python
-import httplib2
-# The json module provides an api converting inmemory python objects to a
-# serialized representation known as json or javascript object notation.
-import json
-# The make_response method converts the return value from a function into a
-# real response object that we can send off to our client.
-from flask import make_response
-# requests is an apache2 license http-library written in python similar to
-# urllib2, but with a few improvements
-import requests
-
-
 # Create an instance of the Flask class with the name of the running
-# application as the argument. Anytime an application in python is run, a
-# special variable called __name__ gets defined for the application and all the
-# imports it uses.
+# application as the argument.
+#
+# Anytime an application in Python is run, a special variable called __name__
+# gets defined for the application and all the imports it uses.
 app = Flask(__name__)
 
-# passing the application object back to the SeaTurf extension
+# Protecting the app against CSRF attacks.
 csrf = SeaSurf(app)
 
-# Settings for the image upload functionality
-# Dynamically determine the root directory
+# Settings for the image upload functionality.
+#
+# Dynamically determine the root directory.
 APP_ROOT = os.path.dirname(os.path.abspath(__file__))
-# Album cover images are stored in the UPLOAD_FOLDER-path
+# Folder for the uploaded album cover images.
 UPLOAD_FOLDER = os.path.join(APP_ROOT, 'static/uploads')
-# Only the following file extensions are allowed for uploaded images
+# Allow only certain file extensions for uploaded images.
 ALLOWED_EXTENSIONS = set(['png', 'jpg', 'jpeg', 'gif'])
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-# limit the file upload size to 2 megabytes.
+# Limit the file upload size to 2 megabytes.
 app.config['MAX_CONTENT_LENGTH'] = 2 * 1024 * 1024
 
-# Declare client_id by referencing the client_secrets file
+# Declare client_id for Google authentification by referencing the
+# client_secrets file.
 CLIENT_ID = json.loads(
     open('g_client_secrets.json', 'r').read())['web']['client_id']
 APPLICATION_NAME = "Music Collection Application"
 
-# Connect to Database and create database session
+# Connect to Database and create a database session.
 engine = create_engine('sqlite:///musiccollections.db')
 Base.metadata.bind = engine
-
 DBSession = sessionmaker(bind=engine)
 session = DBSession()
 
 
 @app.route('/login')
 def showLogin():
-    ''' Create a random anti-forgery state token with each GET request sent to
+    """ Render the login page after a random state token is created.
+
+    Creates a random anti-forgery state token with each GET request sent to
     localhost:5000/login before rendering the login page.
-    '''
+
+    Returns:
+        The login page.
+    """
 
     # Create a variable which will be 32 characters long and a mix of uppercase
     # letters and digits.
     state = ''.join(random.choice(
         string.ascii_uppercase + string.digits) for x in xrange(32))
-    # Store state in the login_session object under the name 'state'
+    # Store the state token in the login_session object.
     login_session['state'] = state
-    # return "The current session state is %s" % login_session['state']
     return render_template('login.html', STATE=state)
 
 
-# exempt from SeaSurf-csrf method as showLogin-method creates an own
+# Exempted from SeaSurf-CSRF.method as the showLogin-method creates an own
 # CSRF-state token.
 @csrf.exempt
 @app.route('/gconnect', methods=['POST'])
 def gconnect():
-    ''' Server side function to handle the state-token and the one-time-code
-    send from the client callback function.
-    '''
+    """ Handles the Google+ sign-in process on the server side.
+
+    Server side function to handle the state-token and the one-time-code
+    send from the client callback function following the seven steps of the
+    Google+ sign-in flow. See the illustrated flow on
+    https://developers.google.com/+/web/signin/server-side-flow.
+
+    Returns:
+        When the sign-in was successful, a html response is sent to the client
+        signInCallback-function confirming the login. Otherwise, one of the
+        following responses is returned:
+        200 OK: The user is already connected.
+        401 Unauthorized: There is either a mismatch between the sent and
+            received state token, the received access token doesn't belong to
+            the intended user or the received client id doesn't match the web
+            apps client id.
+        500 Internal server error: The access token inside the received
+            credentials object is not a valid one.
+
+    Raises:
+        FlowExchangeError: The exchange of the one-time code for the
+            credentials object failed.
+    """
     # Confirm that the token the client sends to the server matches the
-    # token that the server sends to the client. This roundship verification
-    # helps ensure that the user is making the request and and not a malicious
-    # script.
+    # state token that the server sends to the client.
+    # This roundship verification helps ensure that the user is making the
+    # request and and not a maliciousscript.
     # Using the request.args.get-method, the code examines the state token
     # passed in and compares it to the state of the login session. If thesse
     # two do not match, a response message of an invalid state token is created
@@ -129,14 +149,14 @@ def gconnect():
         # server will be sending off.
         oauth_flow.redirect_uri = 'postmessage'
         # The exchange is initiated with the step2_exchange-function passing in
-        # the one-time code as input. The step2_exchange-function of the flow-
-        # class exchanges an authorization (one-time) code for an credentials
-        # object.
+        # the one-time code as input.
+        # The step2_exchange-function of the flow-class exchanges an
+        # authorization (one-time) code for an credentials object.
         # If all goes well, the response from Google will be an object which
         # is stored under the name credentials.
         credentials = oauth_flow.step2_exchange(code)
-    # If an error happens along the way, then I will throw this
-    # FlowExchangeError and send the response as an json-object.
+    # If an error happens along the way, then this FlowExchangeError is thrown
+    # and sends the response as an JSON-object.
     except FlowExchangeError:
         response = make_response(json.dumps(
             'Failed to upgrade the authorization code.'), 401)
@@ -150,7 +170,7 @@ def gconnect():
     # verify that this is a valid token for use.
     url = ('https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=%s'
            % access_token)
-    # Create a json get-request containing the url and access-token and store
+    # Create a JSON get-request containing the url and access-token and store
     # the result of this request in a variable called result
     h = httplib2.Http()
     result = json.loads(h.request(url, 'GET')[1])
@@ -196,29 +216,28 @@ def gconnect():
     # In this user's login_session, the credentials and the gplus_id are stored
     # to recall later (see check above).
     login_session['provider'] = 'google'
-    # login_session['credentials'] = credentials
     login_session['access_token'] = credentials.access_token
     login_session['gplus_id'] = gplus_id
 
     # Use the google plus API to get some more information about the user.
-    # Here, a message is send off to the google API server with my access token
-    # requesting the user info allowed by my token scope and store it in an
-    # object called data.
+    # Here, a message is send off to the google API server with the access
+    # token requesting the user info allowed by the token scope and store it in
+    # an object called data.
     userinfo_url = "https://www.googleapis.com/oauth2/v1/userinfo"
     params = {'access_token': credentials.access_token, 'alt': 'json'}
     answer = requests.get(userinfo_url, params=params)
     data = json.loads(answer.text)
 
-    # Data should all of the values listed on
+    # Data should have all of the values listed on
     # https://developers.google.com/+/api/openidconnect/getOpenIdConnect#response
     # filled in, so long as the user specified them in their account. In the
-    # following, the users name, picture and e-mail address are stored it in my
+    # following, the users name, picture and e-mail address are stored in the
     # login session.
     login_session['username'] = data["name"]
     login_session['picture'] = data["picture"]
     login_session['email'] = data["email"]
 
-    # see if user exists, if it doesn't make a new one
+    # If user doesn't exist, make a new one.
     user_id = getUserID(login_session['email'])
     if not user_id:
         user_id = createUser(login_session)
@@ -238,9 +257,19 @@ def gconnect():
     return output
 
 
-# Disconnect - Revoke a current user's token and reset their login_session.
 @app.route("/gdisconnect")
 def gdisconnect():
+    """ Revoke a current user's token and reset their login_session.
+
+    This function is called from the disconnect method when the user is logged
+    in with Google+.
+
+    Returns:
+        200 OK: When user is successfully disconnected or currently not
+            connected.
+        400 Bad Request: When the given token was invalid.
+    """
+
     # Only disconnect a connected user.
     credentials = login_session.get('credentials')
     if credentials is None:
@@ -266,13 +295,25 @@ def gdisconnect():
         return response
 
 
-# exempt from SeaSurf-csrf method as showLogin-method creates an own
+# Exempted from SeaSurf-CSRF-method as the showLogin-method creates an own
 # CSRF-state token.
 @csrf.exempt
 @app.route('/fbconnect', methods=['POST'])
 def fbconnect():
-    # Similarily to the Google login, the value of state is verified to protect
-    # against cross-site reference forgery attacks.
+    """ Handles the Facebook sign-in process on the server side.
+
+    Read the login flow step by step on
+    https://developers.facebook.com/docs/facebook-login/login-flow-for-web/v2.2.
+
+    Returns:
+        When the sign-in was successful, a html response is sent to the client
+        sendTokenToServer-function confirming the login. Otherwise, the
+        following response is returned:
+        401 Unauthorized: There is a mismatch between the sent and
+            received state token.
+    """
+    # Similarily to the Google login, the value of the state token is verified
+    # to protect against cross-site reference forgery attacks.
     if request.args.get('state') != login_session['state']:
         response = make_response(json.dumps('Invalid state parameter.'), 401)
         response.headers['Content-Type'] = 'application/json'
@@ -293,20 +334,20 @@ def fbconnect():
     result = h.request(url, 'GET')[1]
 
     # Use token to get user info from API
-    userinfo_url = "https://graph.facebook.com/v2.2/me"
+    # not used: userinfo_url = "https://graph.facebook.com/v2.2/me"
+
     # The long-lived token includes an expires-field that indicates how long
     # this token is valid. Longterm tokens can last up to two months.
     # Strip expire tag from access token since it is not needed to make API
     # calls.
     token = result.split("&")[0]
 
-    # If the token works API calls should be possible like in the
-    # following.
+    # If the token works API calls should be possible like in the following.
     url = 'https://graph.facebook.com/v2.2/me?%s' % token
     h = httplib2.Http()
     result = h.request(url, 'GET')[1]
     data = json.loads(result)
-    # populate the login session
+    # Populate the login session.
     login_session['provider'] = 'facebook'
     login_session['username'] = data["name"]
     login_session['email'] = data["email"]
@@ -321,7 +362,7 @@ def fbconnect():
     data = json.loads(result)
     login_session['picture'] = data["data"]["url"]
 
-    # see if user exists, if it doesn't make a new one
+    # If user doesn't exist, make a new one.
     user_id = getUserID(login_session['email'])
     if not user_id:
         user_id = createUser(login_session)
@@ -341,69 +382,28 @@ def fbconnect():
     return output
 
 
-@app.route("/fbdisconnect")
-def fbdisconnect():
-    facebook_id = login_session['facebook_id']
-    # Execute HTTP GET request to revoke current token.
-    url = 'https://graph.facebook.com/%s/permissions' % facebook_id
-    h = httplib2.Http()
-    result = h.request(url, 'DELETE')[1]
-    return "You have been logged out."
-
-
-# JSON APIs to view Collection Information
-@app.route('/collection/JSON')
-def collectionsJSON():
-    collections = session.query(Collection).all()
-    return jsonify(Collections=[c.serialize for c in collections])
-
-
-@app.route('/collection/<int:collection_id>/album/JSON')
-def collectionJSON(collection_id):
-    collection = session.query(Collection).filter_by(id=collection_id).one()
-    albums = session.query(Album).filter_by(
-        collection_id=collection_id).all()
-    return jsonify(Albums=[a.serialize for a in albums])
-
-
-@app.route('/collection/<int:collection_id>/album/<int:album_id>/JSON')
-def albumJSON(collection_id, album_id):
-    album = session.query(Album).filter_by(id=album_id).one()
-    return jsonify(album=album.serialize)
-
-
-# ATOM APIs to view Collection Information
-@app.route('/collection/atom')
-def collectionsATOM():
-    collections = session.query(Collection).all()
-    return render_template('collections.xml', collections=collections)
-
-
-@app.route('/collection/<int:collection_id>/album/atom')
-def collectionATOM(collection_id):
-    collection = session.query(Collection).filter_by(id=collection_id).one()
-    albums = session.query(Album).filter_by(
-        collection_id=collection_id).all()
-    return render_template('albums.xml', albums=albums,
-                           collection=collection)
-
-
-@app.route('/collection/<int:collection_id>/album/<int:album_id>/atom')
-def albumATOM(collection_id, album_id):
-    album = session.query(Album).filter_by(id=album_id).one()
-    return render_template('album.xml', album=album)
+# function not used currently
+# @app.route("/fbdisconnect")
+# def fbdisconnect():
+#     facebook_id = login_session['facebook_id']
+#     # Execute HTTP GET request to revoke current token.
+#     url = 'https://graph.facebook.com/%s/permissions' % facebook_id
+#     h = httplib2.Http()
+#     result = h.request(url, 'DELETE')[1]
+#     return "You have been logged out."
 
 
 @app.route('/disconnect')
 def disconnect():
+    """ Deletes all user session values and redirect to the main page."""
+
     if 'provider' in login_session:
         if login_session['provider'] == 'google':
             gdisconnect()
             del login_session['gplus_id']
-            # del login_session['credentials']
             del login_session['access_token']
         if login_session['provider'] == 'facebook':
-            fbdisconnect()
+            # not used: fbdisconnect()
             del login_session['facebook_id']
         # Reset the user's session.
         del login_session['username']
@@ -418,6 +418,56 @@ def disconnect():
         return redirect(url_for('indexCollections'))
 
 
+# JSON APIs to view Collection Information
+@app.route('/collection/JSON')
+def collectionsJSON():
+    """ Returns all collections in JSON format. """
+    collections = session.query(Collection).all()
+    return jsonify(Collections=[c.serialize for c in collections])
+
+
+@app.route('/collection/<int:collection_id>/album/JSON')
+def collectionJSON(collection_id):
+    """ Returns all albums of a distinct collection in JSON format. """
+    # not used: collection = session.query(Collection).filter_by(
+    #               id=collection_id).one()
+    albums = session.query(Album).filter_by(
+        collection_id=collection_id).all()
+    return jsonify(Albums=[a.serialize for a in albums])
+
+
+@app.route('/collection/<int:collection_id>/album/<int:album_id>/JSON')
+def albumJSON(collection_id, album_id):
+    """ Returns a distinct album in JSON format """
+    album = session.query(Album).filter_by(id=album_id).one()
+    return jsonify(album=album.serialize)
+
+
+# ATOM APIs to view Collection Information
+@app.route('/collection/atom')
+def collectionsATOM():
+    """ Returns all collections in Atom format. """
+    collections = session.query(Collection).all()
+    return render_template('collections.xml', collections=collections)
+
+
+@app.route('/collection/<int:collection_id>/album/atom')
+def collectionATOM(collection_id):
+    """ Returns all albums of a distinct collection in Atom format. """
+    collection = session.query(Collection).filter_by(id=collection_id).one()
+    albums = session.query(Album).filter_by(
+        collection_id=collection_id).all()
+    return render_template('albums.xml', albums=albums,
+                           collection=collection)
+
+
+@app.route('/collection/<int:collection_id>/album/<int:album_id>/atom')
+def albumATOM(collection_id, album_id):
+    """ Returns a distinct album in Atom format """
+    album = session.query(Album).filter_by(id=album_id).one()
+    return render_template('album.xml', album=album)
+
+
 # The decorator '@' actually wraps the following function inside the
 # app.route-function that flask has already created. So if either of these
 # routes get sent from the browser the following function gets executed.
@@ -426,10 +476,11 @@ def disconnect():
 # HelloWorld-function. This is useful for having different urls all route to
 # the same place.
 
-# Show all collections
 @app.route('/')
 @app.route('/collection/')
 def indexCollections():
+    """ Show all music collections in the database. """
+
     collections = session.query(Collection).order_by(asc(Collection.name))
     if 'username' not in login_session:
         return render_template('publicCollections.html',
@@ -439,9 +490,15 @@ def indexCollections():
                                collections=collections)
 
 
-# Create a new collection
 @app.route('/collection/new/', methods=['GET', 'POST'])
 def newCollection():
+    """ Create a new music collection in the database.
+
+    Returns:
+        on GET: Page to create a new collection.
+        on POST: Redirect to main page after collection has been created.
+        Login page when user is not signed in.
+    """
     if 'username' not in login_session:
         return redirect('/login')
     if request.method == 'POST':
@@ -455,9 +512,19 @@ def newCollection():
         return render_template('newCollection.html')
 
 
-# Edit a collection
 @app.route('/collection/<int:collection_id>/edit/', methods=['GET', 'POST'])
 def editCollection(collection_id):
+    """ Edit a music collection in the database.
+
+    Args:
+        collection_id: An integer identifying a distinct collection.
+
+    Returns:
+        on GET: Page to edit a collection.
+        on POST: Redirect to main page after collection has been edited.
+        Login page when user is not signed in.
+        Alert when user is trying to edit a collection he is not authorized to.
+    """
     editedCollection = session.query(Collection).filter_by(
         id=collection_id).one()
     if 'username' not in login_session:
@@ -476,9 +543,19 @@ def editCollection(collection_id):
                                collection=editedCollection)
 
 
-# Delete a collection
 @app.route('/collection/<int:collection_id>/delete/', methods=['GET', 'POST'])
 def deleteCollection(collection_id):
+    """ Delete a music collection in the database.
+
+    Args:
+        collection_id: An integer identifying a distinct collection.
+
+    Returns:
+        on GET: Page to delete a collection.
+        on POST: Redirect to main page after collection has been deleted.
+        Login page when user is not signed in.
+        Alert when user tries to delete a collection he is not authorized to.
+    """
     collectionToDelete = session.query(Collection).filter_by(
         id=collection_id).one()
     if 'username' not in login_session:
@@ -499,10 +576,14 @@ def deleteCollection(collection_id):
                                collection=collectionToDelete)
 
 
-# Show albums
 @app.route('/collection/<int:collection_id>/')
 @app.route('/collection/<int:collection_id>/album/')
 def indexAlbums(collection_id):
+    """ Show all albums of a distinct collection.
+
+    Args:
+        collection_id: An integer identifying a distinct collection.
+    """
     collection = session.query(Collection).filter_by(id=collection_id).one()
     creator = getUserInfo(collection.user_id)
     albums = session.query(Album).filter_by(
@@ -518,10 +599,20 @@ def indexAlbums(collection_id):
                                creator=creator)
 
 
-# Create a new album
 @app.route('/collection/<int:collection_id>/album/new/',
            methods=['GET', 'POST'])
 def newAlbum(collection_id):
+    """ Create a new album in the database.
+
+    Args:
+        collection_id: An integer identifying a distinct collection.
+
+    Returns:
+        on GET: Page to create a new album.
+        on POST: Redirect to collection page after album has been created.
+        Login page when user is not signed in.
+        Alert when user is trying to create an album he is not authorized to.
+    """
     if 'username' not in login_session:
         return redirect('/login')
     collection = session.query(Collection).filter_by(id=collection_id).one()
@@ -549,10 +640,29 @@ def newAlbum(collection_id):
         return render_template('newAlbum.html', collection_id=collection_id)
 
 
-# Edit a album
 @app.route('/collection/<int:collection_id>/album/<int:album_id>/edit',
            methods=['GET', 'POST'])
 def editAlbum(collection_id, album_id):
+    """ Edit an existing album in the database.
+
+    Args:
+        collection_id: An integer identifying a distinct collection.
+        album_id: An integer identifying a distinct album.
+
+    Returns:
+        on GET: Page to edit an album.
+        on POST: Redirect to collection page after album has been edited.
+        Login page when user is not signed in.
+        Alert when user is trying to edit an album he is not authorized to.
+
+    Raises:
+        OSError: An Error occured when deleting the former album cover image
+            from the upload folder.
+
+    Known Bugs:
+        Uploaded album picture is deleted even when it is attached to another
+        album as well.
+    """
     if 'username' not in login_session:
         return redirect('/login')
     editedAlbum = session.query(Album).filter_by(id=album_id).one()
@@ -575,7 +685,7 @@ def editAlbum(collection_id, album_id):
             editedAlbum.description = request.form['description']
         if request.form['image_source'] != 'no_change':
             if editedAlbum.cover_source == 'local':
-                # delete the old image from the server if it still exists
+                # Delete the old image from the server if it still exists.
                 try:
                     os.remove(os.path.join(app.config['UPLOAD_FOLDER'],
                               editedAlbum.cover_image))
@@ -594,17 +704,29 @@ def editAlbum(collection_id, album_id):
 
 
 def process_image_source(image_source):
-    ''' Save image when local file is uploaded, save the path when url is
+    """ Save image information to the database, depending on its source.
+
+    Save image when local file is uploaded, save the path when url is
     given, otherwise just take the default image.
-    '''
+
+    This method is called from the editAlbum und deleteAlbum methods.
+
+    Args:
+        image_source: selected image_source in form.
+
+    Returns:
+        source: Local file, external url or no image.
+        filename: Path or filename pointing to the image.
+
+    """
     if image_source == 'local':
         source = 'local'
-        # access the image from the files dictionary on the request object.
+        # Access the image from the files dictionary on the request object.
         file = request.files['file']
         if file and allowed_file(file.filename):
-            # validate filename in case it is forged
+            # Validate filename in case it is forged.
             filename = secure_filename(file.filename)
-            # Save the image in the defined upload folder on the server
+            # Save the image in the defined upload folder on the server.
             file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
     elif image_source == 'url':
         source = 'url'
@@ -616,7 +738,9 @@ def process_image_source(image_source):
 
 
 def allowed_file(filename):
-    ''' Checks if file extension is in the predefined list of allowed extensions to
+    ''' Checks file for allowed extensions.
+
+    Checks if file extension is in the predefined list of allowed extensions to
     make sure that users are not able to upload HTML files that would cause
     Cross-Site Scripting problems.
     '''
@@ -625,17 +749,29 @@ def allowed_file(filename):
            filename.rsplit('.', 1)[1] in ALLOWED_EXTENSIONS
 
 
-# Not needed! Serve uploaded files
-@app.route('/uploads/<filename>')
-def uploaded_file(filename):
-    return send_from_directory(app.config['UPLOAD_FOLDER'],
-                               filename)
-
-
-# Delete a album
 @app.route('/collection/<int:collection_id>/album/<int:album_id>/delete',
            methods=['GET', 'POST'])
 def deleteAlbum(collection_id, album_id):
+    """ Delete an existing album in the database.
+
+    Args:
+        collection_id: An integer identifying a distinct collection.
+        album_id: An integer identifying a distinct album.
+
+    Returns:
+        on GET: Page to delete an album.
+        on POST: Redirect to collection page after album has been deleted.
+        Login page when user is not signed in.
+        Alert when user is trying to delete an album he is not authorized to.
+
+    Raises:
+        OSError: An Error occured when deleting the former album cover image
+            from the upload folder.
+
+    Known Bugs:
+        Uploaded album picture is deleted even when it is attached to another
+        album as well.
+    """
     if 'username' not in login_session:
         return redirect('/login')
     collection = session.query(Collection).filter_by(id=collection_id).one()
@@ -647,7 +783,7 @@ def deleteAlbum(collection_id, album_id):
                 "onload='myFunction()'>")
     if request.method == 'POST':
         if albumToDelete.cover_source == 'local':
-            # delete the old image from the server if it still exists
+            # Delete the old image from the server if it still exists.
             try:
                 os.remove(os.path.join(app.config['UPLOAD_FOLDER'],
                           albumToDelete.cover_image))
@@ -664,8 +800,18 @@ def deleteAlbum(collection_id, album_id):
 
 # User Helper Functions
 def getUserID(email):
-    ''' Returns an e-mail address for a given user id if the id belongs to a
-    user stored in the database. '''
+    """ Return a user ID from the database.
+
+    Returns a user id for a given e-mail address if the e-mail address belongs
+    to a user stored in the database.
+
+    Args:
+        email: e-mail address of a user.
+
+    Returns:
+        If successful, the user id to the given e-mail address, otherwise
+            nothing.
+    """
 
     try:
         user = session.query(User).filter_by(email=email).one()
@@ -675,39 +821,48 @@ def getUserID(email):
 
 
 def getUserInfo(user_id):
-    ''' Returns the user object associated with the given id number. '''
+    """ Returns the user object associated with the given id number.
 
-    '''
-    !!!
-    Error when no entry in database after clicking on a created collection:
-    File "/vagrant/catalog/application.py", line 457, in indexAlbums
-        creator = getUserInfo(collection.user_id)
-    File "/vagrant/catalog/application.py", line 568, in getUserInfo
-        user = session.query(User).filter_by(id=user_id).one()
-    File "/usr/lib/python2.7/dist-packages/sqlalchemy/orm/query.py", line 2316, in one
-        raise orm_exc.NoResultFound("No row was found for one()")
-    NoResultFound: No row was found for one()
-    !!!
-    '''
+    Args:
+        user_id: An integer identifying a distinct user.
+
+    Returns:
+        A user object containing all fields of the found row in the database.
+
+    Known Bugs:
+        Experienced the follwoing error message when there is no entry in
+        database afterclicking on a created collection:
+        File "/vagrant/catalog/application.py", line 457, in indexAlbums
+            creator = getUserInfo(collection.user_id)
+        File "/vagrant/catalog/application.py", line 568, in getUserInfo
+            user = session.query(User).filter_by(id=user_id).one()
+        File "/usr/lib/python2.7/dist-packages/sqlalchemy/orm/query.py", line 2316, in one
+            raise orm_exc.NoResultFound("No row was found for one()")
+        NoResultFound: No row was found for one()
+    """
     user = session.query(User).filter_by(id=user_id).one()
-    # print user
     return user
 
 
 def createUser(login_session):
-    ''' Creates a new user in the database. '''
+    """ Creates a new user in the database.
 
-    '''
-    !!!
-    Error after first Login with Google:
-    File "/vagrant/oauth/project.py", line 196, in gconnect
-        user_id = createUser(login_session)
-      File "/vagrant/oauth/project.py", line 581, in createUser
-        user = session.query(User).filter_by(email=login_session['email']
-            .one())
-    AttributeError: 'unicode' object has no attribute 'one'
-    !!!
-    '''
+    Args:
+        login_session: session object with user data.
+
+    Returns:
+        user.id: generated distinct integer value identifying the newly created
+            user.
+
+    Known Bugs:
+        Experienced error message after first Login with Google:
+        File "/vagrant/oauth/project.py", line 196, in gconnect
+            user_id = createUser(login_session)
+          File "/vagrant/oauth/project.py", line 581, in createUser
+            user = session.query(User).filter_by(email=login_session['email']
+                .one())
+        AttributeError: 'unicode' object has no attribute 'one'
+    """
 
     newUser = User(name=login_session['username'],
                    email=login_session['email'],
@@ -718,17 +873,17 @@ def createUser(login_session):
     return user.id
 
 
-# The application run by the python interpreter gets a name variable set to
-# __main__, whereas all the other imported python files get a __name__ variable
-# set to the name of the actual python file.
+# The application run by the Python interpreter gets a name variable set to
+# __main__, whereas all the other imported Python files get a __name__ variable
+# set to the name of the actual Python file.
 # The if-statement makes sure the server only runs if the script is executed
-# directly from the python interpreter and not used as an imported module.
+# directly from the Python interpreter and not used as an imported module.
 if __name__ == '__main__':
-    # flash uses the secret key to create sessions for the users
+    # Flash uses the secret key to create sessions for the users.
     app.secret_key = 'super_secret_key'
     # If debug is enabled, the server will reload itself each time it notices a
-    # code change
+    # code change.
     app.debug = True
     # host='0.0.0.0' tells the webserver on the vagrant machine to listen on
-    # all public IP-addresses
+    # all public IP-addresses.
     app.run(host='0.0.0.0', port=5000)
