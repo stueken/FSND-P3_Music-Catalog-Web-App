@@ -139,12 +139,16 @@ p {
 
  .collection-list {
  	background-color: #F0F0F0;
- 	padding: 20px;
+ 	padding-top: 8px;
+ 	padding-bottom: 15px;
+ 	margin: 3px;
 u }
 
  .collection-list:hover {
  	background-color: #e1e17f;
- 	padding: 20px;
+ 	padding-top: 8px;
+ 	padding-bottom: 15px;
+ 	margin: 3px;
 }
 
 .album {
@@ -175,6 +179,10 @@ u }
 	color: #000;
 	font-weight: 400;
 	margin-top: -20px;
+}
+
+.cover-image img {
+	width: 120px;
 }
 
 .flash {

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+	<author>
+		<name>Norbert Stüken</name>
+	</author>
+	<title type="text">Music Collections</title>
+	{% for collection in collections %}
+	<entry>
+		<title type="text">{{collection.name}}</title>
+		<summary type="xhtml">
+			<div xmlns="http://www.w3.org/1999/xhtml">
+				<p>ID: <collection_id>{{collection.id}}</collection_id></p>
+				<p>Collection: <collection>{{collection.name}}</collection></p>
+			</div>
+		</summary>
+	</entry>
+	{% endfor %}
+</feed> 

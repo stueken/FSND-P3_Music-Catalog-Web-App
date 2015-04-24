@@ -51,7 +51,8 @@ class Album(Base):
     genre = Column(String(100), nullable=False)
     year = Column(String(4))
     description = Column(String(250))
-    # picture =
+    cover_source = Column(String(5))
+    cover_image = Column(String(250))
     user_id = Column(Integer, ForeignKey('user.id'))
     user = relationship(User)
     collection_id = Column(Integer, ForeignKey('collection.id'))

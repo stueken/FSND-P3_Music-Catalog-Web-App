@@ -14,6 +14,8 @@
 <form action="#" method = 'post' style="display: inline;">
 	<button type="submit" class="btn btn-default delete" id="submit" type="submit">
 	<span class="glyphicon glyphicon-trash" aria-hidden="true"></span>Delete</button>
+	<!-- attach the CSRF cookie that is set to a random value -->
+	<input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
 </form>
 <a href = '{{url_for('indexAlbums', collection_id=collection.id)}}'>
 	<button class="btn btn-default delete">

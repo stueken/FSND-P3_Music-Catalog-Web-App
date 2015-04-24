@@ -1,6 +1,22 @@
 {% extends "main.html" %}
 {% block content %}
 {% include "header.html" %}
+	<!-- Dynamically showing different form input fields depending on chosen radio select for album cover. -->
+	<script type="text/javascript">
+		function source_select() {
+		    if (document.getElementById('local_source').checked) {
+		        document.getElementById('ifLocal').style.display = 'block';
+		       	document.getElementById('ifURL').style.display = 'none';
+		    } else if (document.getElementById('url_source').checked) {
+		        document.getElementById('ifURL').style.display = 'block';
+		       	document.getElementById('ifLocal').style.display = 'none';
+		    } else {
+		        document.getElementById('ifLocal').style.display = 'none';
+		       	document.getElementById('ifURL').style.display = 'none';
+		    }
+		}
+	</script>
+
 	<div class="row divider green">
 		<div class="col-md-12"></div>
 	</div>
@@ -11,12 +27,12 @@
 	</div>
 	<div class="row">
 		<div class="col-md-6 col-md-offset-1 padding-top">
-			<form action="#" method = "post" style="display: inline;">
+			<form action="#" method = "post" enctype=multipart/form-data style="display: inline;">
 				<div class="form-group" style="display: inline;">
-					<label for="name">Name:</label>
-					<input type ="text" maxlength="250" class="form-control" name="name" value="{{album.name}}">
 					<label for="artist">Artist:</label>
 					<input type ="text" maxlength="250" class="form-control" name="artist" value="{{album.artist}}">
+					<label for="name">Album:</label>
+					<input type ="text" maxlength="250" class="form-control" name="name" value="{{album.name}}">
 					<label for="genre">Genre:</label>
 					<div class="radio">
 					  <label>
@@ -35,7 +51,7 @@
 					</div>
 					<div class="radio">
 					  <label>
-					    <input type="radio" name="genre" id="genre4" value="Classic" {%if album.genre =='Classic'%}checked{%endif%}>Classic
+					    <input type="radio" name="genre" id="genre4" value="Classic" {% if album.genre =='Classic' %}checked{% endif %}>Classic
 					  </label>
 					</div>
 					<label for="year">Year:</label>
@@ -44,9 +60,54 @@
 					</div>
 					<label for="description">Description:</label>
 					<textarea class="form-control" maxlength="250" rows="3" name="description">{{album.description}}</textarea>
+					<br/>
+					<div class="row">
+						<div class="col-md-8">
+							<label for="image_source">Edit Album Cover:</label>
+							<div class="radio">
+		      					<label>
+		      						<input type="radio" onclick="javascript:source_select();" name="image_source" id="no_change" value="no_change" checked/>No Change
+								</label>
+							</div>
+		      				<div class="radio">
+		      					<label>
+		      						<input type="radio" onclick="javascript:source_select();" name="image_source" id="no_cover" value="None"/>No Album Cover
+								</label>
+							</div>
+		      				<div class="radio">
+		      					<label>
+		      						<input type="radio" onclick="javascript:source_select();" name="image_source" id="local_source" value="local"/>Upload Image-File
+								</label>
+							</div>
+							<div id="ifLocal" style="display:none">
+								<label for=file>
+									<input type=file name=file value="{{album.cover_image}}">
+								</label>
+							</div>
+							<div class="radio">
+		      					<label>
+		      						<input type="radio" onclick="javascript:source_select();" name="image_source" id="url_source" value="url"/>Paste in Image-URL
+								</label>
+							</div>
+							<div id="ifURL" style="display:none">
+								<label for="URL">
+									<input type ="text" maxlength="250" class="form-control" name="URL" placeholder="URL of the cover image">
+								</label>
+							</div>
+						</div>
+						<div class="col-md-4 cover-image">
+							{% if album.cover_source == 'url' %}
+								<p><img src="{{album.cover_image}}"></p>
+							{% else %}
+								<p><img src="/static/uploads/{{album.cover_image}}"></p>
+							{% endif %}
+							<p>{{album.cover_image}}</p>
+						</div>	
+					</div>
 					<button type="submit" class="btn btn-default" id="submit" type="submit">
 					<span class="glyphicon glyphicon-ok" aria-hidden="true"></span>Save</button>
 				</div>
+				<input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
 			</form>
 			<a href = '{{url_for('indexAlbums', collection_id=collection_id)}}'>
 				<button class="btn btn-default delete">

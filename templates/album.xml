@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+	<author>
+		<name>Norbert Stüken</name>
+	</author>
+	<title type="text">Album: {{album.artist}} - {{album.name}}</title>
+	<entry>
+		<summary type="xhtml">
+			<div xmlns="http://www.w3.org/1999/xhtml">
+				<p>ID: <album_id>{{album.id}}</album_id></p>
+				<p>Artist: <artist>{{album.artist}}</artist></p>
+				<p>Album: <album>{{album.name}}</album></p>
+				<p>Year: <year>{{album.year}}</year></p>
+				<p>Genre: <genre>{{album.genre}}</genre></p>
+				<p>Description: <description>{{album.description}}</description></p>
+			</div>
+		</summary>
+	</entry>
+</feed> 

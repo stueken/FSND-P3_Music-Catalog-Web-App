@@ -1,5 +1,9 @@
+import os
+# send_from_directory-function helps to serve uploaded files to the user
 from flask import (Flask, render_template, request, redirect, jsonify, url_for,
-                   flash)
+                   flash, send_from_directory)
+# Function to validate filenames in case it is forged
+from werkzeug import secure_filename
 from sqlalchemy import create_engine, asc
 from sqlalchemy.orm import sessionmaker
 from database_setup import Base, Collection, Album, User
@@ -12,6 +16,9 @@ from database_setup import Base, Collection, Album, User
 from flask import session as login_session
 import random
 import string
+
+# SeaSurf is a Flask Extension for preventing cross-site request forgery (CSRF)
+from flask.ext.seasurf import SeaSurf
 
 # The flow_from_clientsecrets method creates a flow object from the
 # clientsecrets-JSON-file. This JSON-formatted file stores your client id,
@@ -33,11 +40,26 @@ from flask import make_response
 # urllib2, but with a few improvements
 import requests
 
+
 # Create an instance of the Flask class with the name of the running
 # application as the argument. Anytime an application in python is run, a
 # special variable called __name__ gets defined for the application and all the
 # imports it uses.
 app = Flask(__name__)
+
+# passing the application object back to the SeaTurf extension
+csrf = SeaSurf(app)
+
+# Settings for the image upload functionality
+# Dynamically determine the root directory
+APP_ROOT = os.path.dirname(os.path.abspath(__file__))
+# Album cover images are stored in the UPLOAD_FOLDER-path
+UPLOAD_FOLDER = os.path.join(APP_ROOT, 'static/uploads')
+# Only the following file extensions are allowed for uploaded images
+ALLOWED_EXTENSIONS = set(['png', 'jpg', 'jpeg', 'gif'])
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+# limit the file upload size to 2 megabytes.
+app.config['MAX_CONTENT_LENGTH'] = 2 * 1024 * 1024
 
 # Declare client_id by referencing the client_secrets file
 CLIENT_ID = json.loads(
@@ -68,6 +90,9 @@ def showLogin():
     return render_template('login.html', STATE=state)
 
 
+# exempt from SeaSurf-csrf method as showLogin-method creates an own
+# CSRF-state token.
+@csrf.exempt
 @app.route('/gconnect', methods=['POST'])
 def gconnect():
     ''' Server side function to handle the state-token and the one-time-code
@@ -241,6 +266,9 @@ def gdisconnect():
         return response
 
 
+# exempt from SeaSurf-csrf method as showLogin-method creates an own
+# CSRF-state token.
+@csrf.exempt
 @app.route('/fbconnect', methods=['POST'])
 def fbconnect():
     # Similarily to the Google login, the value of state is verified to protect
@@ -324,6 +352,12 @@ def fbdisconnect():
 
 
 # JSON APIs to view Collection Information
+@app.route('/collection/JSON')
+def collectionsJSON():
+    collections = session.query(Collection).all()
+    return jsonify(Collections=[c.serialize for c in collections])
+
+
 @app.route('/collection/<int:collection_id>/album/JSON')
 def collectionJSON(collection_id):
     collection = session.query(Collection).filter_by(id=collection_id).one()
@@ -333,15 +367,31 @@ def collectionJSON(collection_id):
 
 
 @app.route('/collection/<int:collection_id>/album/<int:album_id>/JSON')
-def AlbumJSON(collection_id, album_id):
+def albumJSON(collection_id, album_id):
     album = session.query(Album).filter_by(id=album_id).one()
     return jsonify(album=album.serialize)
 
 
-@app.route('/collection/JSON')
-def collectionsJSON():
+# ATOM APIs to view Collection Information
+@app.route('/collection/atom')
+def collectionsATOM():
     collections = session.query(Collection).all()
-    return jsonify(Collections=[c.serialize for c in collections])
+    return render_template('collections.xml', collections=collections)
+
+
+@app.route('/collection/<int:collection_id>/album/atom')
+def collectionATOM(collection_id):
+    collection = session.query(Collection).filter_by(id=collection_id).one()
+    albums = session.query(Album).filter_by(
+        collection_id=collection_id).all()
+    return render_template('albums.xml', albums=albums,
+                           collection=collection)
+
+
+@app.route('/collection/<int:collection_id>/album/<int:album_id>/atom')
+def albumATOM(collection_id, album_id):
+    album = session.query(Album).filter_by(id=album_id).one()
+    return render_template('album.xml', album=album)
 
 
 @app.route('/disconnect')
@@ -459,7 +509,7 @@ def indexAlbums(collection_id):
         collection_id=collection_id).all()
     if ('username' not in login_session or
             creator.id != login_session['user_id']):
-        return render_template('publicCollection.html', albums=albums,
+        return render_template('publicAlbums.html', albums=albums,
                                collection=collection, creator=creator)
     # The logged in user is the creator of the collection.
     else:
@@ -481,11 +531,14 @@ def newAlbum(collection_id):
                 "collection in order to add albums.');}</script><body "
                 "onload='myFunction()'>")
     if request.method == 'POST':
+        source, filename = process_image_source(request.form['image_source'])
         newAlbum = Album(name=request.form['name'],
                          artist=request.form['artist'],
                          genre=request.form['genre'],
                          year=request.form['year'],
                          description=request.form['description'],
+                         cover_source=source,
+                         cover_image=filename,
                          collection_id=collection_id,
                          user_id=login_session['user_id'])
         session.add(newAlbum)
@@ -517,9 +570,19 @@ def editAlbum(collection_id, album_id):
         if request.form['genre']:
             editedAlbum.genre = request.form['genre']
         if request.form['year']:
-            editedAlbum.price = request.form['year']
+            editedAlbum.year = request.form['year']
         if request.form['description']:
             editedAlbum.description = request.form['description']
+        if request.form['image_source'] != 'no_change':
+            if editedAlbum.cover_source == 'local':
+                # delete the old image from the server if it still exists
+                try:
+                    os.remove(os.path.join(app.config['UPLOAD_FOLDER'],
+                              editedAlbum.cover_image))
+                except OSError:
+                    pass
+            editedAlbum.cover_source, editedAlbum.cover_image = \
+                process_image_source(request.form['image_source'])
         session.add(editedAlbum)
         session.commit()
         flash('Album Successfully Edited')
@@ -528,6 +591,45 @@ def editAlbum(collection_id, album_id):
         return render_template('editAlbum.html',
                                collection_id=collection_id, album_id=album_id,
                                album=editedAlbum)
+
+
+def process_image_source(image_source):
+    ''' Save image when local file is uploaded, save the path when url is
+    given, otherwise just take the default image.
+    '''
+    if image_source == 'local':
+        source = 'local'
+        # access the image from the files dictionary on the request object.
+        file = request.files['file']
+        if file and allowed_file(file.filename):
+            # validate filename in case it is forged
+            filename = secure_filename(file.filename)
+            # Save the image in the defined upload folder on the server
+            file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
+    elif image_source == 'url':
+        source = 'url'
+        filename = request.form['URL']
+    else:
+        source = None
+        filename = 'no_cover.png'
+    return (source, filename)
+
+
+def allowed_file(filename):
+    ''' Checks if file extension is in the predefined list of allowed extensions to
+    make sure that users are not able to upload HTML files that would cause
+    Cross-Site Scripting problems.
+    '''
+
+    return '.' in filename and \
+           filename.rsplit('.', 1)[1] in ALLOWED_EXTENSIONS
+
+
+# Not needed! Serve uploaded files
+@app.route('/uploads/<filename>')
+def uploaded_file(filename):
+    return send_from_directory(app.config['UPLOAD_FOLDER'],
+                               filename)
 
 
 # Delete a album
@@ -544,6 +646,13 @@ def deleteAlbum(collection_id, album_id):
                 "own collection in order to delete albums.');}</script><body "
                 "onload='myFunction()'>")
     if request.method == 'POST':
+        if albumToDelete.cover_source == 'local':
+            # delete the old image from the server if it still exists
+            try:
+                os.remove(os.path.join(app.config['UPLOAD_FOLDER'],
+                          albumToDelete.cover_image))
+            except OSError:
+                pass
         session.delete(albumToDelete)
         session.commit()
         flash('Album Successfully Deleted')
@@ -581,7 +690,7 @@ def getUserInfo(user_id):
     !!!
     '''
     user = session.query(User).filter_by(id=user_id).one()
-    print user
+    # print user
     return user
 
 

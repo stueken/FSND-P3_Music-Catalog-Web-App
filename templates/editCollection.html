@@ -19,6 +19,7 @@
 					<button type="submit" class="btn btn-default" id="submit" type="submit">
 					<span class="glyphicon glyphicon-ok" aria-hidden="true"></span>Save</button>
 				</div>
+				<input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
 			</form>
 			<a href = '{{url_for('indexAlbums', collection_id=collection.id)}}'>
 				<button class="btn btn-default delete">
