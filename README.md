@@ -1,6 +1,6 @@
 # Item Catalog: Music Collection Web Application
 
-Project to develop a web application based on the [Flask][1] framework that provides a list of music albums within different collections. Thereby integrating third party user registration and authentication. Authenticated users have the ability to create, edit, and delete their own collections and albums.
+A web application based on the [Flask][1] framework that provides a list of music albums within different collections. Thereby integrating third party user registration and authentication. Authenticated users have the ability to create, edit, and delete their own collections and albums.
 
 **Note:** This is a solution to project 3 of the [Udacity Full Stack Web Developer Nanodegree][2] based on the courses [Full Stack Foundations (ud088)][3] and [Authentication & Authorization: OAuth (ud330)][4]. The solution is graded with "Exceeds Specifications".
 
