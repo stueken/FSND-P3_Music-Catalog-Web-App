@@ -35,7 +35,7 @@ The project has been run from a vagrant virtual machine, but basically the main 
 ## Running Instructions
 
 1. Change to the `/` (base) directory.
-2. Start the local server by typing in `python application.py`.
+2. Start the local server by typing in `$ python application.py`.
 3. Open a web browser and type in the URL `http://localhost:5000`.
 4. Enjoy :)
 
